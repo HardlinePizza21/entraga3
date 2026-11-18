@@ -93,26 +93,81 @@ sudo apt install clang bpftool libbpf-dev libelf-dev zlib1g-dev pkg-config make 
 
 En arquitecturas distintas de x86-64, define `BPF_ARCH` al valor que espera libbpf para esa arquitectura.
 
-### Compilar y ejecutar
+### Guion paso a paso para validar la implementación
+
+Realiza la validación en una máquina virtual o equipo de laboratorio: mientras está cargado, el filtro afecta a los mapeos del sistema y puede impedir que algunas aplicaciones abran archivos con mapeo compartido escribible. No lo cargues en un sistema de producción.
+
+#### 1. Comprobar el kernel activo
 
 ```sh
+uname -r
+grep -E '^(CONFIG_BPF|CONFIG_BPF_SYSCALL|CONFIG_BPF_LSM|CONFIG_DEBUG_INFO_BTF)=' \
+  "/boot/config-$(uname -r)" 2>/dev/null || true
+test -r /sys/kernel/btf/vmlinux && echo "BTF disponible"
+cat /sys/kernel/security/lsm
+```
+
+Confirma que el kernel tiene BPF LSM y BTF habilitados, que existe `/sys/kernel/btf/vmlinux` y que la lista activa de LSM incluye `bpf`. La configuración puede estar en otra ubicación según la distribución. Tener BTF no significa por sí solo que el hook LSM esté habilitado.
+
+#### 2. Instalar herramientas de compilación
+
+En Ubuntu o Debian:
+
+```sh
+sudo apt update
+sudo apt install clang bpftool libbpf-dev libelf-dev zlib1g-dev pkg-config make gcc
+```
+
+Esto instala el compilador con backend BPF, las herramientas para extraer BTF y generar el skeleton, y las bibliotecas/cabeceras de libbpf. En otras distribuciones, instala los paquetes equivalentes.
+
+#### 3. Hacer una compilación limpia
+
+Desde la raíz del proyecto:
+
+```sh
+make clean
 make
+```
+
+`make clean` elimina los artefactos generados anteriores. `make` crea `build/vmlinux.h` desde el BTF del kernel activo, compila el filtro eBPF, genera el skeleton y enlaza el cargador y las pruebas C. Las opciones `-Wall`, `-Wextra` y `-Werror` convierten las advertencias de C en errores, así que una compilación exitosa no debe mostrar advertencias.
+
+Si la compilación falla, revisa primero las dependencias, la ruta de BTF y que `BPF_ARCH` coincida con la arquitectura. No continúes con las pruebas de integración hasta que `make` termine con código cero.
+
+#### 4. Ejecutar la prueba automatizada
+
+```sh
+sudo -v
+make test
+```
+
+`sudo -v` valida los privilegios para que el script pueda iniciar el cargador con `sudo -n`. El script carga temporalmente la política durante 15 segundos y, mientras está activa, ejecuta `mmap_guard_test`. El enlace eBPF se libera cuando termina el cargador. Si la carga no está permitida, el script falla en lugar de presentar un falso éxito.
+
+Se espera ver mensajes que indiquen que:
+
+- el mapeo `MAP_SHARED` escribible fue rechazado con `EACCES`;
+- 400 intentos concurrentes de crear ese mapeo fueron rechazados;
+- el mapeo `MAP_PRIVATE` permitió una escritura privada sin alterar el archivo;
+- escrituras privadas concurrentes con `MADV_DONTNEED` no persistieron en el archivo.
+
+Las pruebas usan un archivo temporal y no modifican archivos del sistema. La prueba concurrente valida la política de alta del mapeo; la prueba con `MADV_DONTNEED` es una comprobación acotada de concurrencia, no una demostración matemática de ausencia de carreras en el kernel.
+
+#### 5. Alternativa manual para observar la intercepción
+
+En una terminal, carga el filtro durante 30 segundos:
+
+```sh
 sudo ./build/mmap_guard --seconds 30
 ```
 
-En otra terminal, mientras el cargador siga activo:
+Mientras aparezca `Política activa`, ejecuta en otra terminal:
 
 ```sh
 ./build/mmap_guard_test
 ```
 
-O ejecutar el flujo automatizado, que necesita `sudo` sin interacción:
+El kernel consulta el hook `file_mmap` al solicitar cada mapeo. Si el archivo es regular y la solicitud combina `MAP_SHARED` con `PROT_WRITE`, el hook devuelve `EACCES` y el proceso no obtiene el mapeo. Los otros casos siguen la política de LSM del sistema. Al vencer los 30 segundos, el cargador se cierra y retira su enlace.
 
-```sh
-make test
-```
-
-El cargador requiere privilegios para adjuntar el programa. La carga puede estar restringida por la configuración del kernel, lockdown, contenedores o políticas de seguridad. No deshabilitar esas protecciones para forzar la prueba.
+El cargador necesita privilegios para adjuntar el programa. La carga también puede estar restringida por lockdown, contenedores o políticas de seguridad. No deshabilites esas protecciones para forzar la prueba. Si cambias la duración, ejecútala en una sola terminal con el banco de pruebas en la otra y asegúrate de completar el test antes de que el cargador se cierre.
 
 ## Interpretación y límites
 
@@ -127,4 +182,5 @@ El cargador requiere privilegios para adjuntar el programa. La carga puede estar
 
 - La prueba C se compiló con `-Wall -Wextra -Werror`; `--cow-only` confirmó que `MAP_PRIVATE` sobre un descriptor de solo lectura permite cambios privados sin modificar el archivo.
 - `--race-only` completó 1000 solicitudes de `MADV_DONTNEED` concurrentes con escrituras privadas y confirmó que el contenido del archivo no cambió.
-- No se pudo compilar ni cargar el eBPF LSM en el entorno de elaboración: faltan `clang` y `libbpf`/sus encabezados. El sistema sí expone BTF y tiene `CONFIG_BPF_LSM=y`, pero la integración requiere instalar las dependencias y ejecutar las pruebas con privilegios en un entorno compatible.
+
+No se pudo compilar ni cargar el eBPF LSM en el entorno de elaboración: faltan `clang` y `libbpf`/sus encabezados. El sistema sí expone BTF y tiene `CONFIG_BPF_LSM=y`, pero la integración requiere instalar las dependencias y ejecutar las pruebas con privilegios en un entorno compatible.
