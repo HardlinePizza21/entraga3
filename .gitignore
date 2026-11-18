@@ -1,0 +1,9 @@
+/build/
+*.o
+*.a
+*.so
+*.bpf.o
+*.core
+core
+__pycache__/
+*.py[cod]
