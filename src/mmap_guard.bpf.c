@@ -11,8 +11,8 @@
 #define MMG_S_IFREG 0100000
 #define MMG_EACCES 13
 
-SEC("lsm/file_mmap")
-int BPF_PROG(mmap_guard_file_mmap, struct file *file, unsigned long reqprot,
+SEC("lsm/mmap_file")
+int BPF_PROG(mmap_guard_mmap_file, struct file *file, unsigned long reqprot,
              unsigned long prot, unsigned long flags, int ret)
 {
     unsigned int mode;

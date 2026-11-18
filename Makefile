@@ -28,7 +28,7 @@ $(BUILD_DIR)/vmlinux.h: | $(BUILD_DIR) check-deps
 
 $(BUILD_DIR)/mmap_guard.bpf.o: src/mmap_guard.bpf.c $(BUILD_DIR)/vmlinux.h
 	$(CLANG) -target bpf -D__TARGET_ARCH_$(BPF_ARCH) -O2 -g \
-		-Wall -Werror -I$(BUILD_DIR) $(LIBBPF_CFLAGS) \
+		-Wall -Werror -Wno-missing-declarations -I$(BUILD_DIR) $(LIBBPF_CFLAGS) \
 		-c $< -o $@
 
 $(BUILD_DIR)/mmap_guard.skel.h: $(BUILD_DIR)/mmap_guard.bpf.o

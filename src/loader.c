@@ -62,7 +62,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    link = bpf_program__attach_lsm(skeleton->progs.mmap_guard_file_mmap);
+    link = bpf_program__attach_lsm(skeleton->progs.mmap_guard_mmap_file);
     error = libbpf_get_error(link);
     if (error) {
         fprintf(stderr, "No se pudo adjuntar el hook LSM: %d\n", error);
